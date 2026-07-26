@@ -16,12 +16,12 @@ jobs:
       matrix:
         include:
           - name: win64
-            os: windows-latest
+            os: windows-2022
             triplet: x64-windows-static-md
             arch: x64
             artifact: gmsv_mongodb_win64.dll
           - name: win32
-            os: windows-latest
+            os: windows-2022
             triplet: x86-windows-static-md
             arch: Win32
             artifact: gmsv_mongodb_win32.dll
