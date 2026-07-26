@@ -7,8 +7,6 @@ int destroy_collection(lua_State* state);
 
 int collection_name(lua_State* state);
 
-int collection_command(lua_State* state);
-
 int collection_count(lua_State* state);
 
 int collection_find(lua_State* state);

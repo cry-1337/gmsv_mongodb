@@ -5,6 +5,8 @@
 
 int new_objectid(lua_State* L);
 
+int destroy_objectid(lua_State* L);
+
 int objectid_tostring(lua_State* L);
 
 int objectid_eq(lua_State* L);

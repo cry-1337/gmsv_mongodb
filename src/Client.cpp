@@ -1,180 +1,130 @@
 #include "Client.hpp"
 
-#define CHECK_CLIENT() \
-    auto client = LUA->GetUserType<mongoc_client_t>(1, ClientMetaTableId); \
-    if (client == nullptr) return 0;
+#include <memory>
 
-/**
- * Create a new MongoDB C client.
- * @param LUA Lua state
- * @return
- */
+using namespace GarrysMod::Lua;
+
+static const auto PING = bsoncxx::from_json(R"({"ping":1})");
+
 LUA_FUNCTION(new_client) {
-    auto uri = LUA->CheckString(1);
-    auto name = LUA->CheckString(2);
+    std::string connection = LUA->CheckString(1);
 
-    auto client = mongoc_client_new(uri);
-
-    if (!client)  {
-        LUA->ThrowError("MongoDB failed to create a client!");
-        return 0;
+    if (LUA->IsType(2, Type::String)) {
+        if (const std::string app = LUA->GetString(2); !app.empty()) {
+            connection += (connection.find('?') == std::string::npos ? "?appName=" : "&appName=");
+            connection += app;
+        }
     }
 
-    mongoc_client_set_appname(client, name);
+    MONGO_TRY
+        mongocxx::uri uri{connection};
+        auto client = std::make_unique<mongocxx::client>(uri);
 
-    bson_error_t error;
+        (*client)["admin"].run_command(PING.view());
 
-    if (!mongoc_client_command_simple(client, "admin", BCON_NEW("ping", BCON_INT32(1)), nullptr, nullptr, &error)) {
-        LUA->ThrowError(error.message);
-        return 0;
-    }
-
-    LUA->PushUserType(client, ClientMetaTableId);
+        LUA->PushUserType(client.release(), ClientMetaTableId);
+    MONGO_CATCH
 
     return 1;
 }
 
-/**
- * Used by Lua to perform client garbage collection.
- * @param LUA Lua state
- * @return
- */
 LUA_FUNCTION(destroy_client) {
-    CHECK_CLIENT()
+    const auto client = LUA->GetUserType<mongocxx::client>(1, ClientMetaTableId);
+    if (client == nullptr) return 0;
 
-    mongoc_client_destroy(client);
+    delete client;
+    LUA->SetUserType(1, nullptr);
 
     return 0;
 }
 
-/**
- * Run a BSON command on the client.
- * @param LUA Lua state
- * @return
- */
 LUA_FUNCTION(client_command) {
-    CHECK_CLIENT()
+    GET_SELF(client, mongocxx::client, ClientMetaTableId)
 
-    auto database = LUA->CheckString(2);
-    LUA->CheckType(3, GarrysMod::Lua::Type::Table);
+    const auto database = LUA->CheckString(2);
+    const auto command = LuaTableToBSON(LUA, 3);
 
-    auto ref = LUA->ReferenceCreate();
-
-    auto command = LuaToBSON(LUA, ref);
-    bson_t reply;
-    bson_error_t error;
-
-    bool success = mongoc_client_command_simple(client, database, command, nullptr, &reply, &error);
-    bson_destroy(command);
-    if (!success) {
-        bson_destroy(&reply);
-        LUA->ThrowError(error.message);
-        return 0;
-    }
-
-    BSONToLua(LUA, &reply);
-    bson_destroy(&reply);
+    MONGO_TRY
+        const auto reply = (*client)[database].run_command(command.view());
+        BSONToLua(LUA, reply.view());
+    MONGO_CATCH
 
     return 1;
 }
 
-/**
- * Retrieve the client's current URI.
- * @param LUA Lua state
- * @return
- */
 LUA_FUNCTION(client_uri) {
-    CHECK_CLIENT()
+    GET_SELF(client, mongocxx::client, ClientMetaTableId)
 
-    auto uri = mongoc_client_get_uri(client);
-
-    LUA->PushString(mongoc_uri_get_string(uri));
+    MONGO_TRY
+        const std::string uri = client->uri().to_string();
+        LUA->PushString(uri.c_str());
+    MONGO_CATCH
 
     return 1;
 }
 
 LUA_FUNCTION(client_default_database) {
-    CHECK_CLIENT()
+    GET_SELF(client, mongocxx::client, ClientMetaTableId)
 
-    auto database = mongoc_client_get_default_database(client);
+    MONGO_TRY
+        const std::string name = client->uri().database();
+        if (name.empty()) {
+            LUA->ThrowError("The connection URI has no default database!");
+            return 0;
+        }
 
-    LUA->PushUserType(database, DatabaseMetaTableId);
+        const auto db = new mongocxx::database(client->database(name));
+        LUA->PushUserType(db, DatabaseMetaTableId);
+    MONGO_CATCH
 
     return 1;
 }
 
-/**
- * Get a list of the MongoDB databases.
- * @see client_database
- * @param LUA
- * @return
- */
 LUA_FUNCTION(client_list_databases) {
-    CHECK_CLIENT()
+    GET_SELF(client, mongocxx::client, ClientMetaTableId)
 
-    auto cursor = mongoc_client_find_databases_with_opts(client, nullptr);
+    MONGO_TRY
+        auto cursor = client->list_databases();
 
-    LUA->CreateTable();
+        LUA->CreateTable();
 
-    const bson_t* bson;
-    int i = 0;
-    while (mongoc_cursor_next(cursor, &bson)) {
-        LUA->PushNumber(++i);
-        BSONToLua(LUA, bson);
-        LUA->SetTable(-3);
-    }
-
-    bson_error_t error;
-    bool has_error = mongoc_cursor_error(cursor, &error);
-
-    mongoc_cursor_destroy(cursor);
-
-    if (has_error) {
-        LUA->Pop();
-        LUA->ThrowError(error.message);
-        return 0;
-    }
+        int i = 0;
+        for (auto&& doc : cursor) {
+            LUA->PushNumber(++i);
+            BSONToLua(LUA, doc);
+            LUA->SetTable(-3);
+        }
+    MONGO_CATCH
 
     return 1;
 }
 
-/**
- * Retrieve a MongoDB database and pass it to Lua
- * @param LUA
- * @return
- */
 LUA_FUNCTION(client_database) {
-    CHECK_CLIENT()
+    GET_SELF(client, mongocxx::client, ClientMetaTableId)
 
-    auto database = LUA->CheckString(2);
-    auto db = mongoc_client_get_database(client, database);
+    const auto name = LUA->CheckString(2);
 
-    bson_error_t error;
-    bool success = mongoc_database_command_simple(db, BCON_NEW("ping", BCON_INT32(1)), nullptr, nullptr, &error);
-    if (!success) {
-        LUA->ThrowError(error.message);
-        return 0;
-    }
+    MONGO_TRY
+        auto db = std::make_unique<mongocxx::database>(client->database(name));
 
-    LUA->PushUserType(db, DatabaseMetaTableId);
+        db->run_command(PING.view());
+
+        LUA->PushUserType(db.release(), DatabaseMetaTableId);
+    MONGO_CATCH
 
     return 1;
 }
 
-/**
- * Retrieve a MongoDB collection and pass it to Lua
- * @param LUA
- * @return
- */
 LUA_FUNCTION(client_collection) {
-    CHECK_CLIENT()
+    GET_SELF(client, mongocxx::client, ClientMetaTableId)
 
-    auto database = LUA->CheckString(2);
-    auto name = LUA->CheckString(3);
+    const auto database = LUA->CheckString(2);
+    const auto name = LUA->CheckString(3);
 
-    auto collection = mongoc_client_get_collection(client, database, name);
-
-    LUA->PushUserType(collection, CollectionMetaTableId);
+    MONGO_TRY
+        const auto collection = new mongocxx::collection((*client)[database][name]);
+        LUA->PushUserType(collection, CollectionMetaTableId);
+    MONGO_CATCH
 
     return 1;
 }

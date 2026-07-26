@@ -3,10 +3,11 @@
 
 #include "MongoDB.hpp"
 
-void BSONToLua(GarrysMod::Lua::ILuaBase* LUA, const bson_t* bson);
+bsoncxx::document::value LuaTableToBSON(GarrysMod::Lua::ILuaBase* LUA, int index);
 
-const char* LuaToJSON(GarrysMod::Lua::ILuaBase* LUA, int ref);
+bsoncxx::document::value LuaTableToBSONOptional(GarrysMod::Lua::ILuaBase* LUA, int index);
 
-bson_t* LuaToBSON(GarrysMod::Lua::ILuaBase* LUA, int ref);
+void BSONToLua(GarrysMod::Lua::ILuaBase* LUA, const bsoncxx::document::view& view);
+void BSONArrayToLua(GarrysMod::Lua::ILuaBase* LUA, const bsoncxx::array::view& view);
 
 #endif //GMSV_MONGODB_UTIL_HPP

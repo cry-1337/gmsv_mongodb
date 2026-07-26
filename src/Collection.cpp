@@ -1,206 +1,126 @@
 #include "Collection.hpp"
 
-#define CHECK_COLLECTION() \
-        auto collection = LUA->GetUserType<mongoc_collection_t>(1, CollectionMetaTableId); \
-        if (collection == nullptr) return 0; \
+using namespace GarrysMod::Lua;
 
 LUA_FUNCTION(destroy_collection) {
-    CHECK_COLLECTION()
+    const auto collection = LUA->GetUserType<mongocxx::collection>(1, CollectionMetaTableId);
+    if (collection == nullptr) return 0;
 
-    mongoc_collection_destroy(collection);
+    delete collection;
+    LUA->SetUserType(1, nullptr);
 
     return 0;
 }
 
-LUA_FUNCTION(collection_command) {
-    CHECK_COLLECTION()
-
-    CHECK_BSON(command, opts)
-
-    SETUP_QUERY(error, reply)
-
-    bool success = mongoc_collection_command_with_opts(collection, command, nullptr, opts, &reply, &error);
-
-    CLEANUP_BSON(command, opts)
-
-    CLEANUP_QUERY(error, reply, !success)
-
-    BSONToLua(LUA, &reply);
-    bson_destroy(&reply);
-
-    return 1;
-}
-
 LUA_FUNCTION(collection_name) {
-    CHECK_COLLECTION()
+    GET_SELF(collection, mongocxx::collection, CollectionMetaTableId)
 
-    LUA->PushString(mongoc_collection_get_name(collection));
+    MONGO_TRY
+        const auto view = collection->name();
+        const std::string name(view.data(), view.size());
+        LUA->PushString(name.c_str());
+    MONGO_CATCH
 
     return 1;
 }
 
 LUA_FUNCTION(collection_count) {
-    CHECK_COLLECTION()
+    GET_SELF(collection, mongocxx::collection, CollectionMetaTableId)
 
-    CHECK_BSON(filter, opts)
+    const auto filter = LuaTableToBSONOptional(LUA, 2);
 
-    SETUP_QUERY(error)
-
-    int64_t count = mongoc_collection_count_documents(collection, filter, opts, nullptr, nullptr, &error);
-
-    CLEANUP_BSON(filter, opts)
-
-    CLEANUP_QUERY(error, count == -1)
-
-    LUA->PushNumber((double)count);
+    MONGO_TRY
+        const int64_t count = collection->count_documents(filter.view());
+        LUA->PushNumber(static_cast<double>(count));
+    MONGO_CATCH
 
     return 1;
 }
 
 LUA_FUNCTION(collection_find) {
-    CHECK_COLLECTION()
+    GET_SELF(collection, mongocxx::collection, CollectionMetaTableId)
 
-    CHECK_BSON(filter, opts)
+    const auto filter = LuaTableToBSONOptional(LUA, 2);
 
-    mongoc_read_prefs_t* prefs = mongoc_read_prefs_new(MONGOC_READ_PRIMARY);
-    auto cursor = mongoc_collection_find_with_opts(collection, filter, opts, prefs);
-    mongoc_read_prefs_destroy(prefs);
+    MONGO_TRY
+        auto cursor = collection->find(filter.view());
 
-    CLEANUP_BSON(filter, opts)
+        LUA->CreateTable();
 
-    LUA->CreateTable();
-
-    const bson_t* bson;
-    int i = 0;
-    while (mongoc_cursor_next(cursor, &bson)) {
-        LUA->PushNumber(++i);
-        BSONToLua(LUA, bson);
-        LUA->SetTable(-3);
-    }
-
-    bson_error_t error;
-    bool has_error = mongoc_cursor_error(cursor, &error);
-
-    mongoc_cursor_destroy(cursor);
-
-    if (has_error) {
-        LUA->Pop();
-        LUA->ThrowError(error.message);
-        return 0;
-    }
+        int i = 0;
+        for (auto&& doc : cursor) {
+            LUA->PushNumber(++i);
+            BSONToLua(LUA, doc);
+            LUA->SetTable(-3);
+        }
+    MONGO_CATCH
 
     return 1;
 }
 
 LUA_FUNCTION(collection_find_one) {
-    CHECK_COLLECTION()
+    GET_SELF(collection, mongocxx::collection, CollectionMetaTableId)
 
-    CHECK_BSON(filter, opts)
+    const auto filter = LuaTableToBSONOptional(LUA, 2);
 
-    bson_t options;
-    bson_init(&options);
-    if (opts) bson_copy_to_excluding_noinit(opts, &options, "limit", "singleBatch", (char *)nullptr);
-
-    BSON_APPEND_INT32(&options, "limit", 1 );
-    BSON_APPEND_BOOL(&options, "singleBatch", true);
-
-    mongoc_read_prefs_t* prefs = mongoc_read_prefs_new(MONGOC_READ_PRIMARY);
-    auto cursor = mongoc_collection_find_with_opts(collection, filter, &options, prefs);
-    mongoc_read_prefs_destroy(prefs);
-    bson_destroy(&options);
-
-    CLEANUP_BSON(filter, opts)
-
-    const bson_t* bson = nullptr;
-    bool found = mongoc_cursor_next(cursor, &bson) && bson != nullptr;
-
-    if (found) {
-        BSONToLua(LUA, bson);
-    }
-
-    bson_error_t error;
-    bool has_error = mongoc_cursor_error(cursor, &error);
-
-    mongoc_cursor_destroy(cursor);
-
-    if (has_error) {
-        if (found) LUA->Pop();
-        LUA->ThrowError(error.message);
-        return 0;
-    }
-
-    if (!found) LUA->PushNil();
+    MONGO_TRY
+        if (auto result = collection->find_one(filter.view())) {
+            BSONToLua(LUA, result->view());
+        } else {
+            LUA->PushNil();
+        }
+    MONGO_CATCH
 
     return 1;
 }
 
 LUA_FUNCTION(collection_insert) {
-    CHECK_COLLECTION()
+    GET_SELF(collection, mongocxx::collection, CollectionMetaTableId)
 
-    CHECK_BSON(document)
+    const auto document = LuaTableToBSON(LUA, 2);
 
-    SETUP_QUERY(error)
-
-    bool success = mongoc_collection_insert(collection, MONGOC_INSERT_NONE, document, nullptr, &error);
-
-    CLEANUP_BSON(document)
-
-    CLEANUP_QUERY(error, !success)
-
-    LUA->PushBool(success);
-
-    return 1;
-}
-
-LUA_FUNCTION(collection_remove) {
-    CHECK_COLLECTION()
-
-    CHECK_BSON(selector)
-
-    SETUP_QUERY(error)
-
-    bool success = mongoc_collection_remove(collection, MONGOC_REMOVE_NONE, selector, nullptr, &error);
-
-    CLEANUP_BSON(selector)
-
-    CLEANUP_QUERY(error, !success)
-
-    LUA->PushBool(success);
+    MONGO_TRY
+        const auto result = collection->insert_one(document.view());
+        LUA->PushBool(result.has_value());
+    MONGO_CATCH
 
     return 1;
 }
 
 LUA_FUNCTION(collection_update) {
-    CHECK_COLLECTION()
+    GET_SELF(collection, mongocxx::collection, CollectionMetaTableId)
 
-    LUA->CheckType(2, GarrysMod::Lua::Type::Table);
-    LUA->CheckType(3, GarrysMod::Lua::Type::Table);
+    const auto filter = LuaTableToBSON(LUA, 2);
+    const auto update = LuaTableToBSON(LUA, 3);
 
-    CHECK_BSON(selector, update)
+    MONGO_TRY
+        const auto result = collection->update_many(filter.view(), update.view());
+        LUA->PushBool(result.has_value());
+    MONGO_CATCH
 
-    SETUP_QUERY(error)
+    return 1;
+}
 
-    bool success = mongoc_collection_update(collection, MONGOC_UPDATE_MULTI_UPDATE, selector, update, nullptr, &error);
+LUA_FUNCTION(collection_remove) {
+    GET_SELF(collection, mongocxx::collection, CollectionMetaTableId)
 
-    CLEANUP_BSON(selector, update)
+    const auto filter = LuaTableToBSON(LUA, 2);
 
-    CLEANUP_QUERY(error, !success)
-
-    LUA->PushBool(success);
+    MONGO_TRY
+        const auto result = collection->delete_many(filter.view());
+        LUA->PushBool(result.has_value());
+    MONGO_CATCH
 
     return 1;
 }
 
 LUA_FUNCTION(collection_bulk) {
-    CHECK_COLLECTION()
+    GET_SELF(collection, mongocxx::collection, CollectionMetaTableId)
 
-    CHECK_BSON(opts)
-
-    auto bulk = mongoc_collection_create_bulk_operation_with_opts(collection, opts);
-
-    CLEANUP_BSON(opts)
-
-    LUA->PushUserType(bulk, BulkMetaTableId);
+    MONGO_TRY
+        const auto bulk = new BulkState(*collection);
+        LUA->PushUserType(bulk, BulkMetaTableId);
+    MONGO_CATCH
 
     return 1;
 }

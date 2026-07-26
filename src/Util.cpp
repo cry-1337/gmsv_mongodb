@@ -1,113 +1,110 @@
 #include "Util.hpp"
 
-const char* LuaToJSON(GarrysMod::Lua::ILuaBase* LUA, int ref) {
-    LUA->ReferencePush(ref);
+using namespace GarrysMod::Lua;
 
-    LUA->PushSpecial(GarrysMod::Lua::SPECIAL_GLOB);
+static std::string LuaTableToJSON(ILuaBase* LUA, int index) {
+    LUA->PushSpecial(SPECIAL_GLOB);
     LUA->GetField(-1, "util");
     LUA->GetField(-1, "TableToJSON");
-    LUA->ReferencePush(ref);
+    LUA->Push(index);
 
     if (LUA->PCall(1, 1, 0) != 0) {
-        throw std::runtime_error(LUA->GetString(-1));
+        std::string err = LUA->GetString(-1);
+        LUA->Pop(3);
+        throw std::runtime_error(err);
     }
 
-    if (!LUA->IsType(-1, GarrysMod::Lua::Type::String)) {
+    if (!LUA->IsType(-1, Type::String)) {
+        LUA->Pop(3);
         throw std::runtime_error("Invalid table passed to MongoDB!");
     }
 
-    auto json = LUA->GetString(-1);
-
-    LUA->Pop(2);
-    LUA->ReferenceFree(ref);
+    std::string json = LUA->GetString(-1);
+    LUA->Pop(3);
 
     return json;
 }
 
-bson_t* LuaToBSON(GarrysMod::Lua::ILuaBase* LUA, int ref) {
-    auto json = LuaToJSON(LUA, ref);
+bsoncxx::document::value LuaTableToBSON(ILuaBase* LUA, int index) {
+    LUA->CheckType(index, Type::Table);
 
-    bson_error_t error;
-    auto bson = bson_new_from_json((const uint8_t*)json, -1,  &error);
-    if (error.code != 0) {
-        throw std::runtime_error(error.message);
+    std::string json = LuaTableToJSON(LUA, index);
+
+    try {
+        return bsoncxx::from_json(json);
+    } catch (const std::exception& e) {
+        throw std::runtime_error(e.what());
     }
-
-    return bson;
 }
 
-void BSONToLua(GarrysMod::Lua::ILuaBase* LUA, const bson_t* bson) {
-    bson_iter_t iter;
+bsoncxx::document::value LuaTableToBSONOptional(ILuaBase* LUA, int index) {
+    if (!LUA->IsType(index, Type::Table)) {
+        return bsoncxx::from_json("{}");
+    }
 
+    return LuaTableToBSON(LUA, index);
+}
+
+static void PushOID(ILuaBase* LUA, const bsoncxx::oid& oid) {
+    auto copy = new bsoncxx::oid(oid);
+    LUA->PushUserType(copy, ObjectIDMetaTableId);
+}
+
+static void PushValue(ILuaBase* LUA, const bsoncxx::types::bson_value::view& value) {
+    switch (value.type()) {
+        case bsoncxx::type::k_double:
+            LUA->PushNumber(value.get_double().value);
+            break;
+        case bsoncxx::type::k_int32:
+            LUA->PushNumber(static_cast<double>(value.get_int32().value));
+            break;
+        case bsoncxx::type::k_int64:
+            LUA->PushNumber(static_cast<double>(value.get_int64().value));
+            break;
+        case bsoncxx::type::k_bool:
+            LUA->PushBool(value.get_bool().value);
+            break;
+        case bsoncxx::type::k_string: {
+            auto str = value.get_string().value;
+            LUA->PushString(str.data(), static_cast<unsigned int>(str.size()));
+            break;
+        }
+        case bsoncxx::type::k_oid:
+            PushOID(LUA, value.get_oid().value);
+            break;
+        case bsoncxx::type::k_date:
+            LUA->PushNumber(static_cast<double>(value.get_date().to_int64()));
+            break;
+        case bsoncxx::type::k_document:
+            BSONToLua(LUA, value.get_document().value);
+            break;
+        case bsoncxx::type::k_array:
+            BSONArrayToLua(LUA, value.get_array().value);
+            break;
+        default:
+            LUA->PushNil();
+            break;
+    }
+}
+
+void BSONToLua(ILuaBase* LUA, const bsoncxx::document::view& view) {
     LUA->CreateTable();
 
-    if (bson != nullptr && bson_iter_init(&iter, bson)) {
-        while (bson_iter_next(&iter)) {
-            auto type = bson_iter_type(&iter);
+    for (auto&& element : view) {
+        PushValue(LUA, element.get_value());
 
-            switch (type) {
-                case BSON_TYPE_DOUBLE:
-                    LUA->PushNumber(bson_iter_as_double(&iter));
-                    break;
-                case BSON_TYPE_INT32:
-                case BSON_TYPE_INT64:
-                    LUA->PushNumber((double) bson_iter_as_int64(&iter));
-                    break;
-                case BSON_TYPE_BOOL:
-                    LUA->PushBool(bson_iter_as_bool(&iter));
-                    break;
-                case BSON_TYPE_UTF8:
-                    LUA->PushString(bson_iter_utf8(&iter, nullptr));
-                    break;
-                case BSON_TYPE_DATE_TIME:
-                    LUA->PushNumber((double) bson_iter_date_time(&iter));
-                    break;
-                case BSON_TYPE_REGEX:
-                    LUA->PushString(bson_iter_regex(&iter, nullptr));
-                    break;
-                case BSON_TYPE_CODE:
-                    LUA->PushString(bson_iter_code(&iter, nullptr));
-                    break;
-                case BSON_TYPE_TIMESTAMP: {
-                    uint32_t t;
-                    bson_iter_timestamp(&iter, &t, nullptr);
-                    LUA->PushNumber(t);
-                    break;
-                }
-                case BSON_TYPE_OID: {
-                    const bson_oid_t *oid = bson_iter_oid(&iter);
+        std::string key(element.key().data(), element.key().size());
+        LUA->SetField(-2, key.c_str());
+    }
+}
 
-                    LUA->PushUserType((void *) oid, ObjectIDMetaTableId);
-                    break;
-                }
-                case BSON_TYPE_DOCUMENT: {
-                    uint32_t len;
-                    const uint8_t *data;
-                    bson_t b;
-                    bson_iter_document(&iter, &len, &data);
-                    bson_init_static(&b, data, (size_t) len);
-                    BSONToLua(LUA, &b);
-                    bson_destroy(&b);
-                    break;
-                }
-                case BSON_TYPE_ARRAY: {
-                    uint32_t len;
-                    const uint8_t *data;
-                    bson_t b;
-                    bson_iter_array(&iter, &len, &data);
-                    bson_init_static(&b, data, (size_t) len);
-                    BSONToLua(LUA, &b);
-                    bson_destroy(&b);
-                    break;
-                }
-                case BSON_TYPE_NULL:
-                    LUA->PushNil();
-                    break;
-                default:
-                    continue;
-            }
+void BSONArrayToLua(ILuaBase* LUA, const bsoncxx::array::view& view) {
+    LUA->CreateTable();
 
-            LUA->SetField(-2, bson_iter_key(&iter));
-        }
+    int i = 0;
+    for (auto&& element : view) {
+        LUA->PushNumber(++i);
+        PushValue(LUA, element.get_value());
+        LUA->SetTable(-3);
     }
 }

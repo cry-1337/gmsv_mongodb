@@ -3,6 +3,17 @@
 
 #include "MongoDB.hpp"
 
+#include <vector>
+#include <mongocxx/model/write.hpp>
+
+struct BulkState {
+    mongocxx::collection collection;
+    std::vector<mongocxx::model::write> operations;
+    std::vector<bsoncxx::document::value> storage;
+
+    explicit BulkState(mongocxx::collection c) : collection(std::move(c)) {}
+};
+
 int destroy_bulk(lua_State* L);
 
 int bulk_execute(lua_State* L);

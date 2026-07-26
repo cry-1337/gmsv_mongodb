@@ -2,8 +2,12 @@
 
 int ClientMetaTableId, DatabaseMetaTableId, CollectionMetaTableId, BulkMetaTableId, ObjectIDMetaTableId;
 
+static mongocxx::instance* g_instance = nullptr;
+
 GMOD_MODULE_OPEN() {
-    mongoc_init();
+    if (g_instance == nullptr) {
+        g_instance = new mongocxx::instance();
+    }
 
     ClientMetaTableId = LUA->CreateMetaTable("MongoDBClient");
 
@@ -78,9 +82,6 @@ GMOD_MODULE_OPEN() {
         LUA->PushCFunction(destroy_collection);
         LUA->SetField(-2, "__gc");
 
-        LUA->PushCFunction(collection_command);
-        LUA->SetField(-2, "Command");
-
         LUA->PushCFunction(collection_name);
         LUA->SetField(-2, "Name");
 
@@ -121,12 +122,24 @@ GMOD_MODULE_OPEN() {
         LUA->PushCFunction(bulk_insert);
         LUA->SetField(-2, "Insert");
 
+        LUA->PushCFunction(bulk_update);
+        LUA->SetField(-2, "Update");
+
+        LUA->PushCFunction(bulk_remove);
+        LUA->SetField(-2, "Remove");
+
+        LUA->PushCFunction(bulk_replace);
+        LUA->SetField(-2, "Replace");
+
     LUA->Pop();
 
     ObjectIDMetaTableId = LUA->CreateMetaTable("MongoDBObjectID");
 
         LUA->Push(-1);
         LUA->SetField(-2, "__index");
+
+        LUA->PushCFunction(destroy_objectid);
+        LUA->SetField(-2, "__gc");
 
         LUA->PushCFunction(objectid_eq);
         LUA->SetField(-2, "__eq");
@@ -155,7 +168,8 @@ GMOD_MODULE_OPEN() {
 }
 
 GMOD_MODULE_CLOSE() {
-    mongoc_cleanup();
+    delete g_instance;
+    g_instance = nullptr;
 
     return 0;
 }
