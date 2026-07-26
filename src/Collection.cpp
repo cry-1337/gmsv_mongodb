@@ -25,7 +25,8 @@ LUA_FUNCTION(collection_command) {
 
     CLEANUP_QUERY(error, reply, !success)
 
-    LUA->ReferencePush(BSONToLua(LUA, &reply));
+    BSONToLua(LUA, &reply);
+    bson_destroy(&reply);
 
     return 1;
 }
@@ -61,24 +62,32 @@ LUA_FUNCTION(collection_find) {
 
     CHECK_BSON(filter, opts)
 
-    auto cursor = mongoc_collection_find_with_opts(collection, filter, opts, mongoc_read_prefs_new(MONGOC_READ_PRIMARY));
+    mongoc_read_prefs_t* prefs = mongoc_read_prefs_new(MONGOC_READ_PRIMARY);
+    auto cursor = mongoc_collection_find_with_opts(collection, filter, opts, prefs);
+    mongoc_read_prefs_destroy(prefs);
 
     CLEANUP_BSON(filter, opts)
 
     LUA->CreateTable();
 
-    int table = LUA->ReferenceCreate();
-
-    const bson_t * bson;
-    for (int i = 0; mongoc_cursor_next(cursor, &bson); ++i) {
-        LUA->ReferencePush(table);
-        LUA->PushNumber(i + 1);
-        LUA->ReferencePush(BSONToLua(LUA, bson));
+    const bson_t* bson;
+    int i = 0;
+    while (mongoc_cursor_next(cursor, &bson)) {
+        LUA->PushNumber(++i);
+        BSONToLua(LUA, bson);
         LUA->SetTable(-3);
     }
 
+    bson_error_t error;
+    bool has_error = mongoc_cursor_error(cursor, &error);
+
     mongoc_cursor_destroy(cursor);
-    LUA->ReferencePush(table);
+
+    if (has_error) {
+        LUA->Pop();
+        LUA->ThrowError(error.message);
+        return 0;
+    }
 
     return 1;
 }
@@ -95,17 +104,32 @@ LUA_FUNCTION(collection_find_one) {
     BSON_APPEND_INT32(&options, "limit", 1 );
     BSON_APPEND_BOOL(&options, "singleBatch", true);
 
-    auto cursor = mongoc_collection_find_with_opts(collection, filter, &options, mongoc_read_prefs_new(MONGOC_READ_PRIMARY));
+    mongoc_read_prefs_t* prefs = mongoc_read_prefs_new(MONGOC_READ_PRIMARY);
+    auto cursor = mongoc_collection_find_with_opts(collection, filter, &options, prefs);
+    mongoc_read_prefs_destroy(prefs);
+    bson_destroy(&options);
 
     CLEANUP_BSON(filter, opts)
 
-    LUA->CreateTable();
+    const bson_t* bson = nullptr;
+    bool found = mongoc_cursor_next(cursor, &bson) && bson != nullptr;
 
-    const bson_t* bson;
-    mongoc_cursor_next(cursor, &bson);
+    if (found) {
+        BSONToLua(LUA, bson);
+    }
+
+    bson_error_t error;
+    bool has_error = mongoc_cursor_error(cursor, &error);
+
     mongoc_cursor_destroy(cursor);
 
-    LUA->ReferencePush(BSONToLua(LUA, bson));
+    if (has_error) {
+        if (found) LUA->Pop();
+        LUA->ThrowError(error.message);
+        return 0;
+    }
+
+    if (!found) LUA->PushNil();
 
     return 1;
 }
