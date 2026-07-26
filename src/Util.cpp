@@ -36,12 +36,12 @@ bson_t* LuaToBSON(GarrysMod::Lua::ILuaBase* LUA, int ref) {
     return bson;
 }
 
-int BSONToLua(GarrysMod::Lua::ILuaBase* LUA, const bson_t* bson) {
+void BSONToLua(GarrysMod::Lua::ILuaBase* LUA, const bson_t* bson) {
     bson_iter_t iter;
 
     LUA->CreateTable();
 
-    if (bson_iter_init(&iter, bson)) {
+    if (bson != nullptr && bson_iter_init(&iter, bson)) {
         while (bson_iter_next(&iter)) {
             auto type = bson_iter_type(&iter);
 
@@ -86,7 +86,7 @@ int BSONToLua(GarrysMod::Lua::ILuaBase* LUA, const bson_t* bson) {
                     bson_t b;
                     bson_iter_document(&iter, &len, &data);
                     bson_init_static(&b, data, (size_t) len);
-                    LUA->ReferencePush(BSONToLua(LUA, &b));
+                    BSONToLua(LUA, &b);
                     bson_destroy(&b);
                     break;
                 }
@@ -96,7 +96,7 @@ int BSONToLua(GarrysMod::Lua::ILuaBase* LUA, const bson_t* bson) {
                     bson_t b;
                     bson_iter_array(&iter, &len, &data);
                     bson_init_static(&b, data, (size_t) len);
-                    LUA->ReferencePush(BSONToLua(LUA, &b));
+                    BSONToLua(LUA, &b);
                     bson_destroy(&b);
                     break;
                 }
@@ -110,6 +110,4 @@ int BSONToLua(GarrysMod::Lua::ILuaBase* LUA, const bson_t* bson) {
             LUA->SetField(-2, bson_iter_key(&iter));
         }
     }
-
-    return LUA->ReferenceCreate();
 }

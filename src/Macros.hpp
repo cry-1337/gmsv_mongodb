@@ -120,7 +120,7 @@
 
 #define CLEANUP_BSON2(s, t, VAR1, VAR2) bson_destroy(VAR1); if (ref_##VAR2 != INT_MIN) { bson_destroy(VAR2); }
 
-#define CLEANUP_BSON3(s, t, VAR1, VAR2, VAR3) bson_destroy(VAR1); if (ref_##VAR2 != INT_MIN) bson_destroy(VAR3); if (ref_##VAR3 != INT_MIN) bson_destroy(VAR3);
+#define CLEANUP_BSON3(s, t, VAR1, VAR2, VAR3) bson_destroy(VAR1); if (ref_##VAR2 != INT_MIN) bson_destroy(VAR2); if (ref_##VAR3 != INT_MIN) bson_destroy(VAR3);
 
 
 #define SETUP_QUERY(...) EXPAND(VA_MACRO( SETUP_QUERY, void, void, __VA_ARGS__ ))
