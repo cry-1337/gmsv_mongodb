@@ -1,0 +1,112 @@
+name: Build
+
+on:
+  push:
+    branches: [ development, master, main ]
+    tags: [ 'v*' ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: win64
+            os: windows-latest
+            triplet: x64-windows-static-md
+            arch: x64
+            artifact: gmsv_mongodb_win64.dll
+          - name: win32
+            os: windows-latest
+            triplet: x86-windows-static-md
+            arch: Win32
+            artifact: gmsv_mongodb_win32.dll
+          - name: linux64
+            os: ubuntu-latest
+            triplet: x64-linux-gmod
+            artifact: gmsv_mongodb_linux64.dll
+          - name: linux32
+            os: ubuntu-latest
+            triplet: x86-linux-gmod
+            m32: true
+            artifact: gmsv_mongodb_linux.dll
+
+    env:
+      # Cache built vcpkg packages in GitHub Actions cache so reruns are fast.
+      VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enable vcpkg GHA binary cache
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Install Linux build tools
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Install 32-bit toolchain
+        if: matrix.m32
+        run: sudo apt-get install -y gcc-multilib g++-multilib
+
+      - name: Bootstrap vcpkg
+        shell: bash
+        run: |
+          git clone --depth 1 https://github.com/microsoft/vcpkg vcpkg
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            ./vcpkg/bootstrap-vcpkg.bat -disableMetrics
+          else
+            ./vcpkg/bootstrap-vcpkg.sh -disableMetrics
+          fi
+
+      - name: Install mongo-cxx-driver
+        shell: bash
+        run: |
+          ./vcpkg/vcpkg install "mongo-cxx-driver:${{ matrix.triplet }}" \
+            --overlay-triplets="$(pwd)/.github/vcpkg-triplets"
+
+      - name: Configure & build (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          cmake -B build -S . -G "Visual Studio 17 2022" -A ${{ matrix.arch }} \
+            -DCMAKE_TOOLCHAIN_FILE="$(pwd)/vcpkg/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }}
+          cmake --build build --config Release
+
+      - name: Configure & build (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          EXTRA=""
+          if [ "${{ matrix.m32 }}" = "true" ]; then
+            EXTRA="-DCMAKE_C_FLAGS=-m32 -DCMAKE_CXX_FLAGS=-m32 -DCMAKE_SHARED_LINKER_FLAGS=-m32"
+          fi
+          cmake -B build -S . -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE="$(pwd)/vcpkg/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }} \
+            -DVCPKG_OVERLAY_TRIPLETS="$(pwd)/.github/vcpkg-triplets" \
+            $EXTRA
+          cmake --build build
+
+      - name: Collect artifact
+        shell: bash
+        run: |
+          mkdir -p out
+          find build -name "${{ matrix.artifact }}" -exec cp {} out/ \;
+          ls -la out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: out/${{ matrix.artifact }}
+          if-no-files-found: error
