@@ -1,5 +1,7 @@
 #include "Collection.hpp"
 
+#include <mongocxx/options/update.hpp>
+
 using namespace GarrysMod::Lua;
 
 LUA_FUNCTION(destroy_collection) {
@@ -107,6 +109,27 @@ LUA_FUNCTION(collection_update) {
         handle->connection->enqueue(
             [db, coll, filter = std::move(filter), update = std::move(update)](mongocxx::client& client) -> ResultValue {
                 return client[db][coll].update_many(filter.view(), update.view()).has_value();
+            }, callback);
+    MONGO_CATCH
+
+    return 0;
+}
+
+LUA_FUNCTION(collection_upsert) {
+    GET_SELF(handle, CollectionHandle, CollectionMetaTableId)
+
+    MONGO_TRY
+        auto filter = LuaTableToBSON(LUA, 2);
+        auto update = LuaTableToBSON(LUA, 3);
+        const int callback = GetCallback(LUA, 4);
+
+        const std::string db = handle->database, coll = handle->collection;
+        handle->connection->enqueue(
+            [db, coll, filter = std::move(filter), update = std::move(update)](mongocxx::client& client) -> ResultValue {
+                mongocxx::options::update options;
+                options.upsert(true);
+
+                return client[db][coll].update_one(filter.view(), update.view(), options).has_value();
             }, callback);
     MONGO_CATCH
 

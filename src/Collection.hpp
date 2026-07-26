@@ -15,6 +15,8 @@ int collection_find_one(lua_State* state);
 
 int collection_insert(lua_State* state);
 
+int collection_upsert(lua_State* state);
+
 int collection_remove(lua_State* state);
 
 int collection_update(lua_State* state);
