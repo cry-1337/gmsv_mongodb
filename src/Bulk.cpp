@@ -23,7 +23,8 @@ LUA_FUNCTION(bulk_execute) {
         return 0;
     }
 
-    LUA->ReferencePush(BSONToLua(LUA, &reply));
+    BSONToLua(LUA, &reply);
+    bson_destroy(&reply);
 
     return 1;
 }

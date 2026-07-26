@@ -67,14 +67,13 @@ LUA_FUNCTION(client_command) {
     bool success = mongoc_client_command_simple(client, database, command, nullptr, &reply, &error);
     bson_destroy(command);
     if (!success) {
-        LUA->ThrowError(error.message);
         bson_destroy(&reply);
+        LUA->ThrowError(error.message);
         return 0;
     }
 
-    auto replyRef = BSONToLua(LUA, &reply);
+    BSONToLua(LUA, &reply);
     bson_destroy(&reply);
-    LUA->ReferencePush(replyRef);
 
     return 1;
 }
@@ -115,22 +114,26 @@ LUA_FUNCTION(client_list_databases) {
 
     auto cursor = mongoc_client_find_databases_with_opts(client, nullptr);
 
-    const bson_t* bson;
-
     LUA->CreateTable();
 
-    auto table = LUA->ReferenceCreate();
-
-    for (int i = 0; mongoc_cursor_next(cursor, &bson); ++i) {
-        LUA->ReferencePush(table);
-            LUA->PushNumber(i + 1);
-            LUA->ReferencePush(BSONToLua(LUA, bson));
+    const bson_t* bson;
+    int i = 0;
+    while (mongoc_cursor_next(cursor, &bson)) {
+        LUA->PushNumber(++i);
+        BSONToLua(LUA, bson);
         LUA->SetTable(-3);
     }
 
+    bson_error_t error;
+    bool has_error = mongoc_cursor_error(cursor, &error);
+
     mongoc_cursor_destroy(cursor);
 
-    LUA->ReferencePush(table);
+    if (has_error) {
+        LUA->Pop();
+        LUA->ThrowError(error.message);
+        return 0;
+    }
 
     return 1;
 }
