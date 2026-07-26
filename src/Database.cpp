@@ -64,17 +64,16 @@ LUA_FUNCTION(database_command) {
     bson_t reply;
     bson_error_t error;
     bool success = mongoc_database_command_simple(database, command, nullptr, &reply, &error);
+    bson_destroy(command);
 
     if (!success) {
+        bson_destroy(&reply);
         LUA->ThrowError(error.message);
         return 0;
     }
 
-    bson_destroy(command);
-
-    auto resultRef = BSONToLua(LUA, &reply);
-
-    LUA->ReferencePush(resultRef);
+    BSONToLua(LUA, &reply);
+    bson_destroy(&reply);
 
     return 1;
 }
