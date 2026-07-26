@@ -9,6 +9,7 @@ add_library(mongodb SHARED
         Collection.cpp Collection.hpp
         Bulk.cpp Bulk.hpp
         ObjectID.cpp ObjectID.hpp
+        Async.cpp Async.hpp
         Util.cpp Util.hpp
         MongoDB.cpp MongoDB.hpp
         Macros.hpp)

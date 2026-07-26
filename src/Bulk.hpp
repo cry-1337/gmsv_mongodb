@@ -7,11 +7,11 @@
 #include <mongocxx/model/write.hpp>
 
 struct BulkState {
-    mongocxx::collection collection;
+    Connection* connection;
+    std::string database;
+    std::string collection;
     std::vector<mongocxx::model::write> operations;
     std::vector<bsoncxx::document::value> storage;
-
-    explicit BulkState(mongocxx::collection c) : collection(std::move(c)) {}
 };
 
 int destroy_bulk(lua_State* L);

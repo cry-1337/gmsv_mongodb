@@ -161,6 +161,8 @@ GMOD_MODULE_OPEN() {
             LUA->SetField(-2, "Client");
             LUA->PushCFunction(new_objectid);
             LUA->SetField(-2, "ObjectID");
+            LUA->PushCFunction(poll);
+            LUA->SetField(-2, "Poll");
         LUA->SetField(-2, "mongodb");
     LUA->Pop();
 
@@ -168,6 +170,10 @@ GMOD_MODULE_OPEN() {
 }
 
 GMOD_MODULE_CLOSE() {
+    for (auto* conn : g_connections) {
+        conn->shutdown();
+    }
+
     delete g_instance;
     g_instance = nullptr;
 

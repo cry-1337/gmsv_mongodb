@@ -1,6 +1,11 @@
 #include "Bulk.hpp"
 
+#include <memory>
+#include <bsoncxx/builder/basic/document.hpp>
+
 using namespace GarrysMod::Lua;
+using bsoncxx::builder::basic::kvp;
+using bsoncxx::builder::basic::make_document;
 
 #define GET_BULK() \
     auto bulk = LUA->GetUserType<BulkState>(1, BulkMetaTableId); \
@@ -88,24 +93,28 @@ LUA_FUNCTION(bulk_replace) {
 LUA_FUNCTION(bulk_execute) {
     GET_BULK()
 
-    MONGO_TRY
-        auto result = bulk->collection.bulk_write(bulk->operations);
+    const int callback = GetCallback(LUA, 2);
 
-        LUA->CreateTable();
+    const std::string db = bulk->database, coll = bulk->collection;
 
-        if (result) {
-            LUA->PushNumber(result->inserted_count());
-            LUA->SetField(-2, "inserted");
-            LUA->PushNumber(result->matched_count());
-            LUA->SetField(-2, "matched");
-            LUA->PushNumber(result->modified_count());
-            LUA->SetField(-2, "modified");
-            LUA->PushNumber(result->deleted_count());
-            LUA->SetField(-2, "deleted");
-            LUA->PushNumber(result->upserted_count());
-            LUA->SetField(-2, "upserted");
-        }
-    MONGO_CATCH
+    auto operations = std::make_shared<std::vector<mongocxx::model::write>>(std::move(bulk->operations));
+    auto storage = std::make_shared<std::vector<bsoncxx::document::value>>(std::move(bulk->storage));
 
-    return 1;
+    bulk->connection->enqueue(
+        [db, coll, operations, storage](mongocxx::client& client) -> ResultValue {
+            (void) storage;
+
+            auto result = client[db][coll].bulk_write(*operations);
+            if (!result) return std::monostate{};
+
+            return make_document(
+                kvp("inserted", result->inserted_count()),
+                kvp("matched", result->matched_count()),
+                kvp("modified", result->modified_count()),
+                kvp("deleted", result->deleted_count()),
+                kvp("upserted", result->upserted_count())
+            );
+        }, callback);
+
+    return 0;
 }

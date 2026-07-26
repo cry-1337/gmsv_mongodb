@@ -24,6 +24,7 @@
 #include <GarrysMod/Lua/Types.h>
 
 #include "Macros.hpp"
+#include "Async.hpp"
 #include "Util.hpp"
 #include "ObjectID.hpp"
 #include "Client.hpp"
