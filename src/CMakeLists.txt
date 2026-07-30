@@ -14,7 +14,7 @@ add_library(mongodb SHARED
         MongoDB.cpp MongoDB.hpp
         Macros.hpp)
 
-target_compile_features(mongodb PRIVATE cxx_std_23)
+target_compile_features(mongodb PRIVATE cxx_std_20)
 
 # Static libs get linked into a shared module, so everything needs -fPIC.
 set_target_properties(mongodb PROPERTIES POSITION_INDEPENDENT_CODE ON)
