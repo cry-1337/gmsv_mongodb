@@ -11,6 +11,7 @@ jobs:
   build:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
     strategy:
       fail-fast: false
       matrix:
@@ -27,10 +28,12 @@ jobs:
             artifact: gmsv_mongodb_win32.dll
           - name: linux64
             os: ubuntu-latest
+            container: debian:bullseye
             triplet: x64-linux-gmod
             artifact: gmsv_mongodb_linux64.dll
           - name: linux32
             os: ubuntu-latest
+            container: debian:bullseye
             triplet: x86-linux-gmod
             m32: true
             artifact: gmsv_mongodb_linux.dll
@@ -40,6 +43,18 @@ jobs:
       VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
 
     steps:
+      - name: Install build deps (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          apt-get update
+          apt-get install -y \
+            build-essential cmake ninja-build git curl zip unzip tar \
+            pkg-config ca-certificates python3 perl
+          if [ "${{ matrix.m32 }}" = "true" ]; then
+            apt-get install -y gcc-multilib g++-multilib
+          fi
+
       - uses: actions/checkout@v4
 
       - name: Enable vcpkg GHA binary cache
@@ -48,14 +63,6 @@ jobs:
           script: |
             core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
-
-      - name: Install Linux build tools
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y ninja-build
-
-      - name: Install 32-bit toolchain
-        if: matrix.m32
-        run: sudo apt-get install -y gcc-multilib g++-multilib
 
       - name: Bootstrap vcpkg
         shell: bash
